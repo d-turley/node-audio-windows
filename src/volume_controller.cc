@@ -120,6 +120,7 @@ public:
     Nan::SetPrototypeMethod(tpl, "setVolume", SetVolume);
     Nan::SetPrototypeMethod(tpl, "isMuted", IsMuted);
     Nan::SetPrototypeMethod(tpl, "setMuted", SetMuted);
+    Nan::SetPrototypeMethod(tpl, "execTranslatorMacro", ExecTranslatorMacro);
 
     constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
     Nan::Set(target, Nan::New("VolumeControl").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
@@ -215,14 +216,52 @@ private:
     }
   }
 
-  static inline Nan::Persistent<v8::Function>& constructor()
+  static NAN_METHOD(ExecTranslatorMacro)
+  {
+    if (info.Length() != 1)
+    {
+      return Nan::ThrowError(Nan::New("Exactly one string parameter is required.").ToLocalChecked());
+    }
+
+    const int CopyDataID = 24;
+    std::string widowName = "Translator CopyData Target";
+
+    HWND hwnd = FindWindowA(NULL, widowName.c_str());
+    if (hwnd == 0)
+    {
+      return Nan::ThrowError(Nan::New("Could not find running Translator instance to send message to").ToLocalChecked());
+    }
+
+    v8::Local<v8::String> v8MacroName = Nan::To<v8::String>(info[0]).ToLocalChecked();
+    std::string wstrMacroName = "Macro: ";
+    wstrMacroName.append(*Nan::Utf8String(v8MacroName));
+
+    LPCSTR lpszMacroName = wstrMacroName.c_str();
+    COPYDATASTRUCT cds;
+    cds.dwData = CopyDataID;
+    cds.cbData = strlen(lpszMacroName);
+    cds.lpData = (PVOID)lpszMacroName;
+
+    SetLastError(ERROR_SUCCESS);
+    PDWORD_PTR lpdwResult = 0;
+    LRESULT ret = SendMessageTimeoutA(hwnd, WM_COPYDATA, (WPARAM)0, (LPARAM)(LPVOID)&cds, SMTO_ABORTIFHUNG, 5000, lpdwResult);
+
+    HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+    if (ret == 0 && FAILED(hr))
+    {
+      std::string e = string_format("%s (0x%X)", "Failed to execute Translator Macro", hr);
+      return Nan::ThrowError(Nan::New(e).ToLocalChecked());
+    }
+  }
+
+  static inline Nan::Persistent<v8::Function> &constructor()
   {
     static Nan::Persistent<v8::Function> constructorFunction;
     return constructorFunction;
   }
 };
 
-void UnInitialize(void*)
+void UnInitialize(void *)
 {
   CoUninitialize();
 }
@@ -233,7 +272,7 @@ NAN_MODULE_INIT(InitModule)
 
   VolumeControlWrapper::Init(target);
 
-  node::AddEnvironmentCleanupHook(Nan::GetCurrentContext()->GetIsolate(), UnInitialize, (void*)NULL);
+  node::AddEnvironmentCleanupHook(Nan::GetCurrentContext()->GetIsolate(), UnInitialize, (void *)NULL);
 }
 
 NODE_MODULE(addon, InitModule)
